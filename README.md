@@ -51,6 +51,14 @@ python -m pip install -r requirements.txt
 python "breakout.py"
 ```
 
+### Linux AppImage
+
+Run the packaged game with:
+
+```bash
+./dist/Breakout-x86_64.AppImage
+```
+
 ## Controls
 
 - **Left / Right Arrow or A / D:** Move the paddle

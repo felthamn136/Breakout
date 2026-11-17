@@ -1,0 +1,8 @@
+[Desktop Entry]
+Type=Application
+Name=Breakout
+Comment=Classic Breakout arcade game
+Exec=Breakout
+Icon=breakout
+Categories=Game;ArcadeGame;
+Terminal=false
