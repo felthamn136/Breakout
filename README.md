@@ -1,6 +1,7 @@
 # Breakout
 
-A classic Breakout-style arcade game built with Python and Tkinter.
+A classic Breakout-style arcade game, available in both Python/Tkinter and
+native Rust/Macroquad implementations.
 
 ## Features
 
@@ -13,13 +14,33 @@ A classic Breakout-style arcade game built with Python and Tkinter.
 - Serve, game over, and win states
 - Mouse and keyboard paddle controls
 - CRT-style scanlines
+- Synthesized sound effects for launches, paddle hits, brick hits, walls,
+  lost lives, and wins
 
 ## Requirements
 
 - Python 3
 - Tkinter (included with most standard Python installations)
+- Rust toolchain and Cargo for the Rust version
 
 ## Run
+
+### Rust
+
+From the project directory:
+
+```powershell
+cargo run --release
+```
+
+Build a standalone executable:
+
+```powershell
+cargo build --release
+.\target\release\breakout-rust.exe
+```
+
+### Python
 
 From the project directory:
 
@@ -29,7 +50,9 @@ python "breakout.py"
 
 ## Controls
 
-- **Left / Right Arrow:** Move the paddle
+- **Left / Right Arrow or A / D:** Move the paddle
+- **Gamepad left stick or D-pad:** Move the paddle
 - **Mouse:** Move the paddle
-- **Space or Left Click:** Launch the ball
-- **Space:** Restart after a game over or win
+- **Space, Enter, or Left Click:** Launch the ball
+- **Gamepad A or Start:** Launch the ball
+- **Space or Enter:** Restart after a game over or win
