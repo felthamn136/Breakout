@@ -203,7 +203,9 @@ impl Game {
 
         if self.state == State::Serve || self.state == State::Play {
             let mouse_delta = mouse_delta_position();
-            let (canvas_x, canvas_w) = playfield_bounds();
+            let canvas_bounds = playfield_bounds();
+            let canvas_x = canvas_bounds.0;
+            let canvas_w = canvas_bounds.1;
             let canvas_h = {
                 let unit = (screen_width() / 4.0).min(screen_height() / 3.0);
                 unit * 3.0
