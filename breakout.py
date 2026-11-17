@@ -1,6 +1,49 @@
+import array
+import glob
+import importlib
+import io
 import math
+import os
 import random
+import struct
+import sys
 import tkinter as tk
+import warnings
+
+
+def make_tone(duration_secs, start_hz, end_hz):
+    sample_rate = 44100
+    sample_count = int(sample_rate * duration_secs)
+    samples = array.array("h")
+    phase = 0.0
+    for index in range(sample_count):
+        progress = index / sample_count
+        frequency = start_hz + (end_hz - start_hz) * progress
+        phase += math.tau * frequency / sample_rate
+        attack = min(progress * 20, 1.0)
+        release = min((1.0 - progress) * 8, 1.0)
+        envelope = attack * release
+        samples.append(int(math.sin(phase) * 0.25 * envelope * 32767))
+
+    if sys.byteorder != "little":
+        samples.byteswap()
+    pcm_data = samples.tobytes()
+    data_size = len(pcm_data)
+    return (
+        b"RIFF"
+        + (36 + data_size).to_bytes(4, "little")
+        + b"WAVEfmt "
+        + (16).to_bytes(4, "little")
+        + (1).to_bytes(2, "little")
+        + (1).to_bytes(2, "little")
+        + sample_rate.to_bytes(4, "little")
+        + (sample_rate * 2).to_bytes(4, "little")
+        + (2).to_bytes(2, "little")
+        + (16).to_bytes(2, "little")
+        + b"data"
+        + data_size.to_bytes(4, "little")
+        + pcm_data
+    )
 
 
 class BreakoutGame:
@@ -60,11 +103,19 @@ class BreakoutGame:
         self.root.bind("<Configure>", self.on_window_resize)
 
         # Input Tracking
-        self.keys = {"Left": False, "Right": False}
+        self.keys = {"Left": False, "Right": False, "a": False, "d": False}
         self.root.bind("<KeyPress>", self.on_key_press)
         self.root.bind("<KeyRelease>", self.on_key_release)
         self.canvas.bind("<Motion>", self.on_mouse_move)
-        self.canvas.bind("<Button-1>", lambda e: self.launch_ball())
+        self.canvas.bind("<Button-1>", self.on_mouse_click)
+        self.gamepad_launch_down = False
+        self.sound_cooldown = 0
+        self.pygame = None
+        self.joysticks = []
+        self.linux_gamepads = {}
+        self.unavailable_gamepad_paths = set()
+        self.sounds = {}
+        self.initialize_optional_features()
 
         # Game State Variables
         self.score = 0
@@ -78,6 +129,64 @@ class BreakoutGame:
         self.create_bricks()
         self.create_scanlines()
         self.game_loop()
+
+    def initialize_optional_features(self):
+        try:
+            self.pygame = importlib.import_module("pygame")
+        except ModuleNotFoundError as error:
+            if error.name != "pygame":
+                raise
+            self.refresh_linux_gamepads()
+            warnings.warn(
+                "Pygame CE is not installed; sound effects are disabled. "
+                "Install dependencies with `python -m pip install -r requirements.txt`.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return
+
+        pygame = self.pygame
+        try:
+            pygame.mixer.init()
+            tones = {
+                "launch": (0.10, 360, 520),
+                "paddle": (0.08, 520, 420),
+                "brick": (0.07, 760, 980),
+                "wall": (0.04, 280, 240),
+                "life_lost": (0.32, 220, 70),
+                "win": (0.55, 440, 880),
+            }
+            self.sounds = {
+                name: pygame.mixer.Sound(file=io.BytesIO(make_tone(*tone)))
+                for name, tone in tones.items()
+            }
+        except pygame.error as error:
+            warnings.warn(
+                f"Sound effects are unavailable: {error}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+
+        if sys.platform.startswith("linux"):
+            self.refresh_linux_gamepads()
+            return
+
+        try:
+            pygame.display.init()
+            pygame.joystick.init()
+            self.joysticks = []
+            for index in range(pygame.joystick.get_count()):
+                joystick = pygame.joystick.Joystick(index)
+                joystick.init()
+                self.joysticks.append(joystick)
+        except pygame.error as error:
+            self.joysticks = []
+            warnings.warn(
+                f"Gamepad support is unavailable: {error}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            self.refresh_linux_gamepads()
 
     def setup_ui(self):
         self.score_text = self.canvas.create_text(
@@ -213,7 +322,9 @@ class BreakoutGame:
     def on_key_press(self, event):
         if event.keysym in self.keys:
             self.keys[event.keysym] = True
-        elif event.keysym == "space":
+        elif event.keysym.lower() in ("a", "d"):
+            self.keys[event.keysym.lower()] = True
+        elif event.keysym in ("space", "Return", "KP_Enter"):
             if self.state == "SERVE":
                 self.launch_ball()
             elif self.state in ("GAME_OVER", "WIN"):
@@ -222,6 +333,8 @@ class BreakoutGame:
     def on_key_release(self, event):
         if event.keysym in self.keys:
             self.keys[event.keysym] = False
+        elif event.keysym.lower() in ("a", "d"):
+            self.keys[event.keysym.lower()] = False
 
     def on_mouse_move(self, event):
         if self.state in ("SERVE", "PLAY"):
@@ -232,11 +345,20 @@ class BreakoutGame:
             if self.state == "SERVE":
                 self.attach_ball_to_paddle()
 
+    def on_mouse_click(self, event):
+        if event.widget is not self.canvas:
+            return
+        if self.state == "SERVE":
+            self.launch_ball()
+        elif self.state in ("GAME_OVER", "WIN"):
+            self.reset_game()
+
     def launch_ball(self):
         if self.state != "SERVE":
             return
         self.state = "PLAY"
         self.canvas.itemconfig(self.banner_text, text="")
+        self.play_sound("launch", ignore_cooldown=True)
         angle = random.uniform(-math.pi / 4, math.pi / 4)
         self.dx = self.ball_speed * math.sin(angle)
         self.dy = -self.ball_speed * math.cos(angle)
@@ -250,6 +372,8 @@ class BreakoutGame:
         self.lives = 3
         self.state = "SERVE"
         self.ball_speed = self.BASE_SPEED * self.scale
+        self.dx = 0
+        self.dy = 0
 
         self.update_hud()
         self.canvas.itemconfig(
@@ -262,13 +386,13 @@ class BreakoutGame:
     # --- Physics & Game Loop ---
     def move_paddle_keys(self):
         move = 0
-        if self.keys["Left"]:
+        if self.keys["Left"] or self.keys["a"]:
             move -= self.PADDLE_SPEED
-        if self.keys["Right"]:
+        if self.keys["Right"] or self.keys["d"]:
             move += self.PADDLE_SPEED
 
         if move != 0:
-            px1, py1, px2, py2 = self.canvas.coords(self.paddle)
+            px1, _, px2, _ = self.canvas.coords(self.paddle)
             if px1 + move < 0:
                 move = -px1
             elif px2 + move > self.WIDTH:
@@ -277,25 +401,137 @@ class BreakoutGame:
             if self.state == "SERVE":
                 self.attach_ball_to_paddle()
 
+    def poll_gamepad(self):
+        if sys.platform.startswith("linux"):
+            return self.poll_linux_gamepads()
+        if self.pygame is None or not self.joysticks:
+            return 0.0, False
+
+        pygame = self.pygame
+        try:
+            pygame.event.pump()
+            pygame.event.clear()
+            move = 0.0
+            launch_down = False
+            for joystick in self.joysticks:
+                if not joystick.get_init():
+                    continue
+                if joystick.get_numaxes() > 0:
+                    axis_value = joystick.get_axis(0)
+                    if abs(axis_value) > 0.20:
+                        move += axis_value
+                for hat_index in range(joystick.get_numhats()):
+                    hat_x, _ = joystick.get_hat(hat_index)
+                    move += hat_x
+                buttons = joystick.get_numbuttons()
+                if buttons > 0 and joystick.get_button(0):
+                    launch_down = True
+                if buttons > 6 and joystick.get_button(6):
+                    launch_down = True
+                if buttons > 7 and joystick.get_button(7):
+                    launch_down = True
+        except pygame.error as error:
+            self.joysticks = []
+            warnings.warn(
+                f"Gamepad support stopped: {error}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return 0.0, False
+        return move, launch_down
+
+    def refresh_linux_gamepads(self):
+        if not sys.platform.startswith("linux"):
+            return
+
+        paths = set(glob.glob("/dev/input/js*"))
+        self.unavailable_gamepad_paths.intersection_update(paths)
+
+        for path in self.linux_gamepads.keys() - paths:
+            os.close(self.linux_gamepads.pop(path)["fd"])
+
+        for path in sorted(paths - self.linux_gamepads.keys() - self.unavailable_gamepad_paths):
+            try:
+                fd = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+            except OSError as error:
+                warnings.warn(
+                    f"Cannot open gamepad {path}: {error}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                self.unavailable_gamepad_paths.add(path)
+                continue
+            self.linux_gamepads[path] = {"fd": fd, "axes": {}, "buttons": {}}
+
+    def poll_linux_gamepads(self):
+        self.refresh_linux_gamepads()
+        move = 0.0
+        launch_down = False
+
+        for path, gamepad in list(self.linux_gamepads.items()):
+            try:
+                while True:
+                    data = os.read(gamepad["fd"], 8)
+                    if len(data) != 8:
+                        break
+                    _, value, event_type, number = struct.unpack("IhBB", data)
+                    event_type &= ~0x80
+                    if event_type == 0x02:
+                        gamepad["axes"][number] = max(-1.0, value / 32767.0)
+                    elif event_type == 0x01:
+                        gamepad["buttons"][number] = value != 0
+            except BlockingIOError:
+                pass
+            except OSError as error:
+                os.close(gamepad["fd"])
+                del self.linux_gamepads[path]
+                self.unavailable_gamepad_paths.add(path)
+                warnings.warn(
+                    f"Gamepad {path} disconnected: {error}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+                continue
+
+            axis_value = gamepad["axes"].get(0, 0.0)
+            if abs(axis_value) > 0.20:
+                move += axis_value
+            if any(gamepad["buttons"].get(button, False) for button in (0, 6, 7)):
+                launch_down = True
+
+        return move, launch_down
+
+    def play_sound(self, name, cooldown=0, ignore_cooldown=False):
+        if (ignore_cooldown or self.sound_cooldown == 0) and name in self.sounds:
+            self.sounds[name].play()
+            if cooldown:
+                self.sound_cooldown = cooldown
+
     def check_collisions(self):
         bx1, by1, bx2, by2 = self.canvas.coords(self.ball)
         bcx = (bx1 + bx2) / 2
-        bcy = (by1 + by2) / 2
 
         # Left & Right Walls
         if bx1 <= 0:
+            self.canvas.move(self.ball, -bx1, 0)
             self.dx = abs(self.dx)
+            self.play_sound("wall", 6)
         elif bx2 >= self.WIDTH:
+            self.canvas.move(self.ball, self.WIDTH - bx2, 0)
             self.dx = -abs(self.dx)
+            self.play_sound("wall", 6)
 
         # Top Wall
         if by1 <= 0:
+            self.canvas.move(self.ball, 0, -by1)
             self.dy = abs(self.dy)
+            self.play_sound("wall", 6)
 
         # Bottom Boundary (Lose Life)
         if by2 >= self.HEIGHT:
             self.lives -= 1
             self.update_hud()
+            self.play_sound("life_lost", 20)
             if self.lives <= 0:
                 self.state = "GAME_OVER"
                 self.canvas.itemconfig(
@@ -303,6 +539,8 @@ class BreakoutGame:
                 )
             else:
                 self.state = "SERVE"
+                self.dx = 0
+                self.dy = 0
                 self.canvas.itemconfig(
                     self.banner_text, text="Press SPACE or Click to Launch"
                 )
@@ -320,6 +558,7 @@ class BreakoutGame:
             bounce_angle = hit_offset * (math.pi / 3)
             self.dx = self.ball_speed * math.sin(bounce_angle)
             self.dy = -self.ball_speed * math.cos(bounce_angle)
+            self.play_sound("paddle", 6)
 
         # Brick Collisions
         for brick in self.bricks[:]:
@@ -348,22 +587,45 @@ class BreakoutGame:
                     self.ball_speed + self.BASE_SPEED_INCREASE * self.scale,
                 )
                 self.update_hud()
+                self.play_sound("brick", 4)
                 break
 
         # Win Condition
         if not self.bricks:
             self.state = "WIN"
+            self.dx = 0
+            self.dy = 0
             self.canvas.itemconfig(
                 self.banner_text, text="YOU WIN! - Press SPACE to Play Again"
             )
+            self.play_sound("win", 30)
 
     def update_hud(self):
         self.canvas.itemconfig(self.score_text, text=f"Score: {self.score}")
         self.canvas.itemconfig(self.lives_text, text=f"Lives: {self.lives}")
 
     def game_loop(self):
+        self.sound_cooldown = max(0, self.sound_cooldown - 1)
+        gamepad_move, gamepad_launch_down = self.poll_gamepad()
+        gamepad_launch_pressed = (
+            gamepad_launch_down and not self.gamepad_launch_down
+        )
+        self.gamepad_launch_down = gamepad_launch_down
+        if gamepad_launch_pressed:
+            if self.state == "SERVE":
+                self.launch_ball()
+            elif self.state in ("GAME_OVER", "WIN"):
+                self.reset_game()
+
         if self.state in ("SERVE", "PLAY"):
             self.move_paddle_keys()
+            if abs(gamepad_move) > 0.20:
+                move = max(-1.0, min(1.0, gamepad_move)) * self.PADDLE_SPEED
+                px1, _, px2, _ = self.canvas.coords(self.paddle)
+                move = max(-px1, min(self.WIDTH - px2, move))
+                self.canvas.move(self.paddle, move, 0)
+                if self.state == "SERVE":
+                    self.attach_ball_to_paddle()
         if self.state == "PLAY":
             self.canvas.move(self.ball, self.dx, self.dy)
             self.check_collisions()

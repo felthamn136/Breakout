@@ -12,7 +12,7 @@ native Rust/Macroquad implementations.
 - Paddle deflection based on hit position
 - Increasing ball speed as bricks are destroyed
 - Serve, game over, and win states
-- Mouse and keyboard paddle controls
+- Mouse, keyboard, and optional gamepad paddle controls
 - CRT-style scanlines
 - Synthesized sound effects for launches, paddle hits, brick hits, walls,
   lost lives, and wins
@@ -21,6 +21,8 @@ native Rust/Macroquad implementations.
 
 - Python 3
 - Tkinter (included with most standard Python installations)
+- Pygame CE for synthesized sound effects and non-Linux gamepad support
+- Linux gamepads can use the native `/dev/input/js*` interface
 - Rust toolchain and Cargo for the Rust version
 
 ## Run
@@ -45,6 +47,7 @@ cargo build --release
 From the project directory:
 
 ```powershell
+python -m pip install -r requirements.txt
 python "breakout.py"
 ```
 
@@ -55,4 +58,4 @@ python "breakout.py"
 - **Mouse:** Move the paddle
 - **Space, Enter, or Left Click:** Launch the ball
 - **Gamepad A or Start:** Launch the ball
-- **Space or Enter:** Restart after a game over or win
+- **Space, Enter, Left Click, or Gamepad A / Start:** Restart after a game over or win
