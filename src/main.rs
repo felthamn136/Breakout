@@ -4,6 +4,9 @@ use gilrs::{Gilrs, Button, Axis};
 
 const BASE_WIDTH: f32 = 800.0;
 const BASE_HEIGHT: f32 = 600.0;
+const BASE_BALL_SPEED: f32 = 4.0;
+const MAX_BALL_SPEED: f32 = 7.0;
+const BALL_SPEED_INCREASE: f32 = 0.03;
 
 #[derive(Clone, Copy, PartialEq)]
 enum State {
@@ -54,7 +57,7 @@ impl Game {
             ball: Rect::new(396.0, 539.0, 14.0, 14.0),
             dx: 0.0,
             dy: 0.0,
-            ball_speed: 5.5,
+            ball_speed: BASE_BALL_SPEED,
             bricks: Vec::new(),
             left_down: false,
             right_down: false,
@@ -120,7 +123,7 @@ impl Game {
         self.score = 0;
         self.lives = 3;
         self.state = State::Serve;
-        self.ball_speed = 5.5;
+        self.ball_speed = BASE_BALL_SPEED;
         self.dx = 0.0;
         self.dy = 0.0;
         self.create_bricks();
@@ -318,7 +321,7 @@ impl Game {
             let points = self.bricks[index].points;
             self.bricks.remove(index);
             self.score += points;
-            self.ball_speed = (9.5_f32).min(self.ball_speed + 0.06);
+            self.ball_speed = MAX_BALL_SPEED.min(self.ball_speed + BALL_SPEED_INCREASE);
             if self.sound_cooldown == 0 {
                 play_sound_once(&sounds.brick);
                 self.sound_cooldown = 4;
