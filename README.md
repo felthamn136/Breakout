@@ -4,7 +4,8 @@ A classic Breakout-style arcade game built with Python and Tkinter.
 
 ## Features
 
-- 800 x 600 game area using a 4:3 aspect ratio
+- Resizable window with a game area that preserves its 4:3 aspect ratio
+- Playfield scales proportionally as the window grows or shrinks
 - Five rows of 50 total bricks
 - Score and remaining lives displayed in the HUD
 - Paddle deflection based on hit position

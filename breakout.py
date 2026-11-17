@@ -8,21 +8,35 @@ class BreakoutGame:
     def __init__(self, root):
         self.root = root
         self.root.title("Breakout")
-        self.root.resizable(False, False)
+        self.root.resizable(True, True)
+        self.root.minsize(400, 300)
+        self.root.configure(bg="#080810")
 
         # Window & Game Constants
-        self.WIDTH = 800
-        self.HEIGHT = 600
+        self.BASE_WIDTH = 800
+        self.BASE_HEIGHT = 600
+        self.scale = 1.0
+        self.WIDTH = self.BASE_WIDTH
+        self.HEIGHT = self.BASE_HEIGHT
         self.root.geometry(f"{self.WIDTH}x{self.HEIGHT}")
+        self.BASE_PADDLE_WIDTH = 90
+        self.BASE_PADDLE_HEIGHT = 12
+        self.BASE_PADDLE_SPEED = 8
+        self.BASE_BALL_RADIUS = 7
+        self.BASE_SPEED = 5.5
         self.PADDLE_WIDTH = 90
         self.PADDLE_HEIGHT = 12
         self.PADDLE_SPEED = 8
         self.BALL_RADIUS = 7
-        self.BASE_SPEED = 5.5
+        self.BASE_MAX_SPEED = 9.5
+        self.BASE_SPEED_INCREASE = 0.06
 
         # Brick Layout
         self.ROWS = 5
         self.COLS = 10
+        self.BASE_BRICK_HEIGHT = 20
+        self.BASE_BRICK_GAP = 4
+        self.BASE_TOP_OFFSET = 55
         self.BRICK_HEIGHT = 20
         self.BRICK_GAP = 4
         self.TOP_OFFSET = 55
@@ -42,7 +56,8 @@ class BreakoutGame:
             bg="#1a1a2e",
             highlightthickness=0,
         )
-        self.canvas.pack()
+        self.canvas.place(x=0, y=0, width=self.WIDTH, height=self.HEIGHT)
+        self.root.bind("<Configure>", self.on_window_resize)
 
         # Input Tracking
         self.keys = {"Left": False, "Right": False}
@@ -91,7 +106,7 @@ class BreakoutGame:
 
     def create_paddle(self):
         x = (self.WIDTH - self.PADDLE_WIDTH) // 2
-        y = self.HEIGHT - 35
+        y = self.HEIGHT - 35 * self.scale
         self.paddle = self.canvas.create_rectangle(
             x,
             y,
@@ -102,7 +117,7 @@ class BreakoutGame:
         )
 
     def create_ball(self):
-        self.ball_speed = self.BASE_SPEED
+        self.ball_speed = self.BASE_SPEED * self.scale
         self.dx = 0
         self.dy = 0
         self.ball = self.canvas.create_oval(
@@ -139,16 +154,60 @@ class BreakoutGame:
                 self.bricks.append({"id": rect, "points": points})
 
     def create_scanlines(self):
-        for y in range(0, self.HEIGHT, 4):
+        for y in range(0, self.BASE_HEIGHT, 3):
             self.canvas.create_rectangle(
                 0,
-                y,
+                y * self.scale,
                 self.WIDTH,
-                y + 1,
+                (y + 1) * self.scale,
                 fill="#000000",
                 outline="",
-                stipple="gray25",
+                stipple="gray50",
+                tags=("scanlines",),
             )
+
+    def on_window_resize(self, event):
+        if event.widget != self.root or event.width <= 0 or event.height <= 0:
+            return
+
+        unit = min(event.width // 4, event.height // 3)
+        if unit <= 0:
+            return
+
+        canvas_width = unit * 4
+        canvas_height = unit * 3
+        new_scale = canvas_width / self.BASE_WIDTH
+        self.canvas.place_configure(
+            x=(event.width - canvas_width) // 2,
+            y=(event.height - canvas_height) // 2,
+            width=canvas_width,
+            height=canvas_height,
+        )
+
+        if new_scale == self.scale:
+            return
+
+        scale_change = new_scale / self.scale
+        self.canvas.scale("all", 0, 0, scale_change, scale_change)
+        self.scale = new_scale
+        self.WIDTH = self.BASE_WIDTH * self.scale
+        self.HEIGHT = self.BASE_HEIGHT * self.scale
+        self.PADDLE_WIDTH = self.BASE_PADDLE_WIDTH * self.scale
+        self.PADDLE_HEIGHT = self.BASE_PADDLE_HEIGHT * self.scale
+        self.PADDLE_SPEED = self.BASE_PADDLE_SPEED * self.scale
+        self.BALL_RADIUS = self.BASE_BALL_RADIUS * self.scale
+        self.BRICK_HEIGHT = self.BASE_BRICK_HEIGHT * self.scale
+        self.BRICK_GAP = self.BASE_BRICK_GAP * self.scale
+        self.TOP_OFFSET = self.BASE_TOP_OFFSET * self.scale
+        self.ball_speed *= scale_change
+        self.dx *= scale_change
+        self.dy *= scale_change
+
+        font_size = max(1, round(14 * self.scale))
+        hud_font = ("Helvetica", font_size, "bold")
+        self.canvas.itemconfigure(self.score_text, font=hud_font)
+        self.canvas.itemconfigure(self.lives_text, font=hud_font)
+        self.canvas.itemconfigure(self.banner_text, font=hud_font)
 
     # --- Controls ---
     def on_key_press(self, event):
@@ -190,13 +249,14 @@ class BreakoutGame:
         self.score = 0
         self.lives = 3
         self.state = "SERVE"
-        self.ball_speed = self.BASE_SPEED
+        self.ball_speed = self.BASE_SPEED * self.scale
 
         self.update_hud()
         self.canvas.itemconfig(
             self.banner_text, text="Press SPACE or Click to Launch"
         )
         self.create_bricks()
+        self.canvas.tag_raise("scanlines")
         self.attach_ball_to_paddle()
 
     # --- Physics & Game Loop ---
@@ -283,7 +343,10 @@ class BreakoutGame:
                 self.bricks.remove(brick)
 
                 self.score += brick["points"]
-                self.ball_speed = min(9.5, self.ball_speed + 0.06)
+                self.ball_speed = min(
+                    self.BASE_MAX_SPEED * self.scale,
+                    self.ball_speed + self.BASE_SPEED_INCREASE * self.scale,
+                )
                 self.update_hud()
                 break
 
