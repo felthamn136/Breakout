@@ -23,7 +23,7 @@ A classic Breakout-style arcade game built with Python and Tkinter.
 From the project directory:
 
 ```powershell
-python "import math.py"
+python "breakout.py"
 ```
 
 ## Controls
