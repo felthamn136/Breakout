@@ -5,8 +5,11 @@ import io
 import math
 import os
 import random
+import shutil
 import struct
+import subprocess
 import sys
+import threading
 import tkinter as tk
 import warnings
 
@@ -115,6 +118,9 @@ class BreakoutGame:
         self.linux_gamepads = {}
         self.unavailable_gamepad_paths = set()
         self.sounds = {}
+        self.sound_data = {}
+        self.aplay_available = False
+        self.aplay_thread = None
         self.initialize_optional_features()
 
         # Game State Variables
@@ -131,41 +137,48 @@ class BreakoutGame:
         self.game_loop()
 
     def initialize_optional_features(self):
+        tones = {
+            "launch": (0.10, 360, 520),
+            "paddle": (0.08, 520, 420),
+            "brick": (0.07, 760, 980),
+            "wall": (0.04, 280, 240),
+            "life_lost": (0.32, 220, 70),
+            "win": (0.55, 440, 880),
+        }
+        self.sound_data = {
+            name: make_tone(*tone) for name, tone in tones.items()
+        }
+
         try:
             self.pygame = importlib.import_module("pygame")
         except ModuleNotFoundError as error:
             if error.name != "pygame":
                 raise
             self.refresh_linux_gamepads()
-            warnings.warn(
-                "Pygame CE is not installed; sound effects are disabled. "
-                "Install dependencies with `python -m pip install -r requirements.txt`.",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+            self.use_aplay_fallback()
             return
 
         pygame = self.pygame
         try:
             pygame.mixer.init()
-            tones = {
-                "launch": (0.10, 360, 520),
-                "paddle": (0.08, 520, 420),
-                "brick": (0.07, 760, 980),
-                "wall": (0.04, 280, 240),
-                "life_lost": (0.32, 220, 70),
-                "win": (0.55, 440, 880),
-            }
             self.sounds = {
-                name: pygame.mixer.Sound(file=io.BytesIO(make_tone(*tone)))
-                for name, tone in tones.items()
+                name: pygame.mixer.Sound(file=io.BytesIO(wave_data))
+                for name, wave_data in self.sound_data.items()
             }
         except pygame.error as error:
-            warnings.warn(
-                f"Sound effects are unavailable: {error}",
-                RuntimeWarning,
-                stacklevel=2,
-            )
+            self.sounds = {}
+            if self.use_aplay_fallback():
+                warnings.warn(
+                    f"Pygame audio failed; using ALSA playback instead: {error}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
+            else:
+                warnings.warn(
+                    f"Sound effects are unavailable: {error}",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
         if sys.platform.startswith("linux"):
             self.refresh_linux_gamepads()
@@ -187,6 +200,42 @@ class BreakoutGame:
                 stacklevel=2,
             )
             self.refresh_linux_gamepads()
+
+    def use_aplay_fallback(self):
+        if sys.platform.startswith("linux") and shutil.which("aplay"):
+            self.aplay_available = True
+            return True
+        warnings.warn(
+            "Audio is unavailable. Install dependencies with "
+            "`python -m pip install -r requirements.txt`.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
+        return False
+
+    def play_with_aplay(self, wave_data):
+        try:
+            result = subprocess.run(
+                ["aplay", "-q", "-"],
+                input=wave_data,
+                capture_output=True,
+                check=False,
+                timeout=3,
+            )
+        except (OSError, subprocess.TimeoutExpired) as error:
+            warnings.warn(
+                f"ALSA sound playback failed: {error}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
+            return
+        if result.returncode:
+            detail = result.stderr.decode(errors="replace").strip()
+            warnings.warn(
+                f"ALSA sound playback failed: {detail or result.returncode}",
+                RuntimeWarning,
+                stacklevel=2,
+            )
 
     def setup_ui(self):
         self.score_text = self.canvas.create_text(
@@ -502,10 +551,23 @@ class BreakoutGame:
         return move, launch_down
 
     def play_sound(self, name, cooldown=0, ignore_cooldown=False):
-        if (ignore_cooldown or self.sound_cooldown == 0) and name in self.sounds:
+        if not (ignore_cooldown or self.sound_cooldown == 0):
+            return
+        if name in self.sounds:
             self.sounds[name].play()
-            if cooldown:
-                self.sound_cooldown = cooldown
+        elif self.aplay_available and name in self.sound_data:
+            if self.aplay_thread is not None and self.aplay_thread.is_alive():
+                return
+            self.aplay_thread = threading.Thread(
+                target=self.play_with_aplay,
+                args=(self.sound_data[name],),
+                daemon=True,
+            )
+            self.aplay_thread.start()
+        else:
+            return
+        if cooldown:
+            self.sound_cooldown = cooldown
 
     def check_collisions(self):
         bx1, by1, bx2, by2 = self.canvas.coords(self.ball)

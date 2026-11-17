@@ -21,8 +21,8 @@ native Rust/Macroquad implementations.
 
 - Python 3
 - Tkinter (included with most standard Python installations)
-- Pygame CE for synthesized sound effects and non-Linux gamepad support
-- Linux gamepads can use the native `/dev/input/js*` interface
+- Pygame CE for sound and non-Linux gamepad support
+- On Linux, sound can fall back to `aplay`; gamepads use `/dev/input/js*`
 - Rust toolchain and Cargo for the Rust version
 
 ## Run
